@@ -1,0 +1,224 @@
+---
+title: "Project 3 update"
+output: html_document
+date: "2025-04-23"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(warning = FALSE, message = FALSE)
+remove(list=ls())
+cat('\014')
+
+# Load packages
+#install.packages("pheatmap")
+library(pheatmap)
+#install.packages("ggplot2")
+#library(ggplot2)
+#install.packages("car")
+library(car)
+packs <- c('tidyverse', 'car', 'table1', 'dplyr','readxl', 'rvest')
+#install.packages('table1')
+lapply(packs, require, character.only = TRUE)
+#install.packages("rvest")           
+# install.packages("ggplot2")       
+#install.packages("dplyr")         
+# install.packages("rmapshaper")
+```
+
+## Reading in data
+
+```{r loading in data}
+combined.dat = read.csv('/cloud/project/crime.age.race.dat.csv')
+#View(combined.dat)
+income_age <- read.csv('/cloud/project/income_age.csv')
+names(income_age)
+income_age <- income_age[,c(2,3,4)]
+names(income_age)[names(income_age) == "placeName"] <- "City"
+merged_data <- merge(combined.dat, income_age, by = "City")
+#View(merged_data)
+
+```
+
+```{r variable selection}
+library(usdm)
+library(car)
+colnames(merged_data)
+columns_to_change_numeric <- c("White.1.", "Other.1..note.1.", "Asian.1.", 
+                      "Black.or.AfricanAmerican.1.", "Native.American.1..note.2.", 
+                      "Hispanic.or.Latino.of.any.race..2.")
+
+# Apply gsub to remove '%' and as.numeric to convert to numeric
+merged_data[columns_to_change_numeric] <- lapply(merged_data[columns_to_change_numeric], function(x) as.numeric(gsub("%", "", x)))
+merged_data <- merged_data[, !names(merged_data) %in% c("White.1.", "Population.age", 'Rank', 'City_lower', 'County.ies.3..note.3.', 'Year', 'Median.Age..')]
+
+
+#Getting sales per capita instead of total sales 
+merged_data$sales.per.capita <- merged_data$Total_Gross_Sales / merged_data$Population.1.
+merged_data$crime.per.capita <- merged_data$total.crime / merged_data$Population.1.
+
+#Adding if urban, rural, suburban categorical variable to data 
+cities <- c("Adelanto", "Antioch", "Arcata", "Atwater", "Berkeley", "Cathedral City", "Chula Vista", "Coachella", "Corona",
+            "Costa Mesa", "Crescent City", "Davis", "Desert Hot Springs", "El Monte", "Eureka", "Goleta", "La Mesa",
+            "Lake Elsinore", "Lompoc", "Long Beach", "Los Angeles", "Maywood", "Modesto", "Moreno Valley", "Napa",
+            "Needles", "Oakland", "Oxnard", "Pacifica", "Palm Desert", "Palm Springs", "Perris", "Port Hueneme",
+            "Redwood City", "Sacramento", "Salinas", "San Bernardino", "San Diego", "San Francisco", "San Jacinto",
+            "San Jose", "San Rafael", "Santa Ana", "Santa Barbara", "Santa Cruz", "Santa Rosa", "South Lake Tahoe",
+            "Stanton", "Stockton", "Ukiah", "Vallejo", "Vista", "West Hollywood")
+urban.rural.class <- c("Rural", "Suburban", "Rural", "Suburban", "Urban", "Suburban", "Urban", "Suburban", "Urban", "Urban",
+                    "Rural", "Suburban", "Rural", "Urban", "Rural", "Suburban", "Suburban", "Suburban", "Rural", "Urban",
+                    "Urban", "Suburban", "Urban", "Urban", "Suburban", "Rural", "Urban", "Urban", "Suburban", "Suburban",
+                    "Suburban", "Suburban", "Suburban", "Suburban", "Urban", "Suburban", "Urban", "Urban", "Urban", "Suburban",
+                    "Urban", "Suburban", "Urban", "Suburban", "Suburban", "Urban", "Rural", "Suburban", "Urban", "Rural",
+                    "Suburban", "Suburban", "Suburban")
+city_data <- data.frame(City = cities, Urban.rural.class = urban.rural.class)
+#View(city_data)
+merged_data_final <- merge(merged_data, city_data, by = "City")
+merged_data_final$Urban.rural.class <- factor(merged_data_final$Urban.rural.class)
+
+#Final dataset, getting rid of unnecessary columns
+merged_data_final <- merged_data_final[, !names(merged_data_final) %in% c( 'White.binary', "Population.age", 'Rank', 'City_lower', 'County.ies.3..note.3.', 'Year', 'Median.Age..', "Violent.crime","Murder.nonnegligent.manslaughter","Rape1","Robbery","Aggravated.assault", "Property.crime","Burglary","Larceny.theft","Vehicle.theft" ,"Arson",  "Population.crime", 'Total_Gross_Sales', 'median_income',"total.crime", 'Population.1.', 'Med.Housing' )]
+View(merged_data_final)
+
+#Data set minus city name, created for model fitting 
+merged_data_numeric <- merged_data_final[, !names(merged_data_final) %in% c("City")]
+
+colnames(merged_data_numeric)
+View(merged_data_numeric)
+
+table1(~., data = merged_data_numeric)
+write.csv(merged_data_numeric, "final.csv")
+
+merged_data_numeric <- merged_data_numeric %>%
+  rename(
+    black = `Black.or.AfricanAmerican.1.`,
+    native = `Native.American.1..note.2.`,
+    hispanic = `Hispanic.or.Latino.of.any.race..2.`,
+    Med.Age = `Value.Median_Age_Person`,
+    Med.Income = `Value.Median_Income_Person`,
+    asian = `Asian.1.`,
+    other= Other.1..note.1.
+  )
+table1(~.,data=merged_data_numeric)
+View(merged_data_numeric)
+additive_model = lm(sales.per.capita ~Med.Age+Med.Income + Urban.rural.class+crime.per.capita+other+asian+black+native+hispanic+White, data=merged_data_numeric)
+summary(additive_model)
+
+interactive_model_1 <- lm(sales.per.capita ~ Med.Age*Med.Income + Urban.rural.class+crime.per.capita+other+asian+black+native+hispanic+White, data=merged_data_numeric)
+summary(interactive_model_1)
+
+anova(additive_model, interactive_model_1)
+
+interactive_model_2 <- lm(sales.per.capita ~Med.Age*Med.Income+ Urban.rural.class*crime.per.capita+other+asian+black+native+hispanic+White, data=merged_data_numeric)
+summary(interactive_model_2)
+
+anova(interactive_model_1,interactive_model_2)
+leveneTest(sales.per.capita~Urban.rural.class)
+View(merged_data_numeric)
+```
+
+
+
+## Creating models 
+
+
+```{r First order model }
+additive.model = lm(sales.per.capita~., data = merged_data_numeric)
+summary(additive.model)
+merged_data_numeric$e = residuals(interactive_model_1)
+merged_data_numeric$yhat <- predict(interactive_model_1)
+
+## Normality & Residual Plot 
+# Assess normality: QQ plot
+qqnorm(merged_data_numeric$e, pch=20, cex=0.5, main = 'Figure 1. Normal Q-Q Plot')
+qqline(merged_data_numeric$e, col='darkgreen')
+attach(merged_data_numeric)
+
+# Assess homoskedasticity/ Equal variance: 
+merged_data_numeric %>% ggplot(aes(x=yhat, y=e))+
+  geom_point(size=0.5)+
+  geom_abline(slope=0, col='darkgreen')+
+  labs(x='\n Predicted Price',
+       y='Residual \n',
+       title= 'Figure 2. Residual Plot')+
+  theme_classic()
+
+
+```
+
+
+```{r}
+merged_data_numeric %>% ggplot(aes(x=crime.per.capita, y=sales.per.capita, color=Urban.rural.class))+
+  geom_point(size=0.5)+
+  geom_smooth(method='lm', se = FALSE)+
+  labs(x='\n crime per capita',
+       y='sales per \n',
+       title= 'Sales per Capita vs Median Housing Price by City')+
+  theme_classic()
+
+
+merged_data_numeric %>%
+  ggplot(aes(x = Med.Income, y = sales.per.capita, color = Med.Age)) +
+  geom_point(size = 0.5) +
+  geom_smooth(method = 'lm', se = FALSE, color = "black") +  # one black regression line
+  scale_color_gradient(low = "blue", high = "red") +
+  theme_minimal() +
+  labs(
+    x = "Median Income",
+    y = "Sales per Capita",
+    color = "Median Age"
+  )
+
+
+```
+```{r leverage and outliers}
+library(broom)
+data.2 <- augment(lm.boxcox)
+
+p <- 14
+n <- 709
+threshold <-2*p/n
+
+high_leverage_points <- data.2 %>% filter(.hat > threshold)
+extreme_resid_points <- data.2%>%filter(abs(.std.resid) > 3)
+cooksd_points <- data.2%>%filter(.cooksd > 0.5)
+
+points <- merge(high_leverage_points,extreme_resid_points)
+#no influential points :)) Nothing over 0.5 in cooks distance
+
+
+
+#looking for high leverage points
+data.2 %>% ggplot(aes(x = .hat, y=.std.resid))+
+  geom_vline(linewidth = 2, colour = 'white', xintercept = 0)+
+  geom_hline(linewidth = 2, colour = 'white', yintercept = 0)+
+  geom_point()+
+  geom_smooth(se=FALSE)+
+  geom_vline(xintercept = threshold, linetype = "dotted", color = "red", linewidth = 1) + 
+  labs(x='Leverage', y= "Studentized Residual", title = "Figure 4: Studentized Residuals vs Leverage  ")+
+  theme_classic()
+
+  
+
+#studentized residual plot vs yhat
+data.2 %>% ggplot(aes(x=.fitted, y=.std.resid))+
+  geom_point()+
+  geom_abline(slope=0, col = 'orange')+
+  geom_abline(slope = 0, intercept = c(3, -3), linetype = "dashed") +
+  labs(x='Fitted', y='Studentized Residual', title = "Figure 5: Studentized Residual plot vs Y-hat ")
+
+
+#cooks distance
+data.2 %>% ggplot(aes(x=seq_along(.cooksd), y=.cooksd))+
+  geom_col()+
+  labs(x="observation number", y="cooks distance", title = "Figure 6: Cooks Distance")
+
+#need to remove those points! 
+# Remove these 2 points from data.2
+cleaned_data <- data.2 %>%
+  filter(!( (.hat > threshold) & (abs(.std.resid) > 3) ))
+cleaned_data <- cleaned_data %>%
+  rename(log_mobility = `log(Mobility)`
+    
+  )
+```
+
